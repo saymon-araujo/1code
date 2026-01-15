@@ -2,7 +2,7 @@ import { Button } from "../../components/ui/button";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useEffect, useState } from "react";
-import { HiMiniMinus, HiMiniPlus } from "react-icons/hi2";
+import { HiArrowTopRightOnSquare, HiMiniMinus, HiMiniPlus } from "react-icons/hi2";
 import { trpc } from "../../lib/trpc";
 import { useChangesStore } from "../../lib/stores/changes-store";
 import { usePRStatus } from "../../hooks/usePRStatus";
@@ -274,8 +274,12 @@ export function ChangesView({
 	const unstagedFiles = [...status.unstaged, ...status.untracked];
 
 	const hasStagedChanges = status.staged.length > 0;
+	const hasUncommittedChanges = status.staged.length > 0 || status.unstaged.length > 0 || status.untracked.length > 0;
 	const hasExistingPR = !!pr;
 	const prUrl = pr?.url;
+
+	// Show CommitInput only when there are uncommitted changes or commits to push/pull
+	const showCommitInput = hasUncommittedChanges || status.pushCount > 0 || status.pullCount > 0 || !status.hasUpstream;
 
 	return (
 		<div className="flex flex-col h-full">
@@ -286,16 +290,30 @@ export function ChangesView({
 				worktreePath={worktreePath}
 			/>
 
-			<CommitInput
-				worktreePath={worktreePath}
-				hasStagedChanges={hasStagedChanges}
-				pushCount={status.pushCount}
-				pullCount={status.pullCount}
-				hasUpstream={status.hasUpstream}
-				hasExistingPR={hasExistingPR}
-				prUrl={prUrl}
-				onRefresh={handleRefresh}
-			/>
+			{showCommitInput ? (
+				<CommitInput
+					worktreePath={worktreePath}
+					hasStagedChanges={hasStagedChanges}
+					pushCount={status.pushCount}
+					pullCount={status.pullCount}
+					hasUpstream={status.hasUpstream}
+					hasExistingPR={hasExistingPR}
+					prUrl={prUrl}
+					onRefresh={handleRefresh}
+				/>
+			) : hasExistingPR && prUrl ? (
+				<div className="flex flex-col gap-1.5 px-2 py-2 border-b border-border">
+					<Button
+						variant="secondary"
+						size="sm"
+						className="w-full gap-1.5 h-7 text-xs"
+						onClick={() => window.open(prUrl, "_blank")}
+					>
+						<HiArrowTopRightOnSquare className="size-4" />
+						Open Pull Request
+					</Button>
+				</div>
+			) : null}
 
 			{!hasChanges ? (
 				<div className="flex-1 flex items-center justify-center text-muted-foreground text-sm px-4 text-center">

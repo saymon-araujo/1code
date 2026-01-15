@@ -273,22 +273,27 @@ export const agentsUnseenChangesAtom = atom<Set<string>>(new Set<string>())
 
 // Current todos state per sub-chat
 // Syncs the first (creation) todo tool with subsequent updates
-// Map structure: { [subChatId]: TodoItem[] }
+// Map structure: { [subChatId]: TodoState }
 interface TodoItem {
   content: string
   status: "pending" | "in_progress" | "completed"
   activeForm?: string
 }
 
-const allTodosStorageAtom = atom<Record<string, TodoItem[]>>({})
+interface TodoState {
+  todos: TodoItem[]
+  creationToolCallId: string | null // ID of the tool call that created the todos
+}
+
+const allTodosStorageAtom = atom<Record<string, TodoState>>({})
 
 // atomFamily to get/set todos per subChatId
 export const currentTodosAtomFamily = atomFamily((subChatId: string) =>
   atom(
-    (get) => get(allTodosStorageAtom)[subChatId] ?? [],
-    (get, set, newTodos: TodoItem[]) => {
+    (get) => get(allTodosStorageAtom)[subChatId] ?? { todos: [], creationToolCallId: null },
+    (get, set, newState: TodoState) => {
       const current = get(allTodosStorageAtom)
-      set(allTodosStorageAtom, { ...current, [subChatId]: newTodos })
+      set(allTodosStorageAtom, { ...current, [subChatId]: newState })
     },
   ),
 )

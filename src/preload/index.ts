@@ -59,6 +59,11 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ipcRenderer.on("update:error", handler)
     return () => ipcRenderer.removeListener("update:error", handler)
   },
+  onUpdateManualCheck: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on("update:manual-check", handler)
+    return () => ipcRenderer.removeListener("update:manual-check", handler)
+  },
 
   // Window controls
   windowMinimize: () => ipcRenderer.invoke("window:minimize"),
@@ -161,6 +166,7 @@ export interface DesktopApi {
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => () => void
   onUpdateDownloaded: (callback: (info: UpdateInfo) => void) => () => void
   onUpdateError: (callback: (error: string) => void) => () => void
+  onUpdateManualCheck: (callback: () => void) => () => void
   // Window controls
   windowMinimize: () => Promise<void>
   windowMaximize: () => Promise<void>

@@ -34,9 +34,6 @@ export function createTransformer() {
   let accumulatedThinking = ""
   let inThinkingBlock = false // Track if we're currently in a thinking block
 
-  // Track UUID for early emission (rollback support on abort)
-  let currentUuid: string | null = null
-
   // Helper to create composite toolCallId: "parentId:childId" or just "childId"
   const makeCompositeId = (originalId: string, parentId: string | null): string => {
     if (parentId) return `${parentId}:${originalId}`
@@ -76,16 +73,6 @@ export function createTransformer() {
   }
 
   return function* transform(msg: any): Generator<UIMessageChunk> {
-    // Emit UUID early for rollback support (before abort can happen)
-    // This ensures frontend has sdkMessageUuid even if streaming is interrupted
-    if (msg.uuid && msg.uuid !== currentUuid) {
-      currentUuid = msg.uuid
-      yield {
-        type: "message-metadata",
-        messageMetadata: { sdkMessageUuid: msg.uuid }
-      }
-    }
-
     // Track parent_tool_use_id for nested tools
     // Only update when explicitly present (don't reset on messages without it)
     if (msg.parent_tool_use_id !== undefined) {
@@ -376,7 +363,6 @@ export function createTransformer() {
         resultSubtype: msg.subtype || "success",
         // Include finalTextId for collapsing tools when there's a final response
         finalTextId: lastTextId || undefined,
-        sdkMessageUuid: msg.uuid,
       }
       yield { type: "message-metadata", messageMetadata: metadata }
       yield { type: "finish-step" }

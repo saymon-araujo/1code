@@ -1,8 +1,8 @@
 {
   "name": "21st-desktop",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "private": true,
-  "description": "21st Agents - Local-First Desktop Application",
+  "description": "1Code - UI for parallel work with AI agents",
   "author": "21st.dev",
   "main": "out/main/index.js",
   "scripts": {
@@ -114,11 +114,11 @@
   },
   "build": {
     "appId": "dev.21st.agents",
-    "productName": "Agents",
+    "productName": "1Code",
     "npmRebuild": true,
     "protocols": [
       {
-        "name": "21st Agents",
+        "name": "1Code",
         "schemes": [
           "twentyfirst-agents"
         ]

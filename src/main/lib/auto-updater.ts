@@ -66,6 +66,11 @@ export async function initAutoUpdater(getWindow: () => BrowserWindow | null) {
   // Event: Update available
   autoUpdater.on("update-available", (info: UpdateInfo) => {
     log.info(`[AutoUpdater] Update available: v${info.version}`)
+    // Update menu to show "Update to vX.X.X..."
+    const setUpdateAvailable = (global as any).__setUpdateAvailable
+    if (setUpdateAvailable) {
+      setUpdateAvailable(true, info.version)
+    }
     sendToRenderer("update:available", {
       version: info.version,
       releaseDate: info.releaseDate,
@@ -98,6 +103,11 @@ export async function initAutoUpdater(getWindow: () => BrowserWindow | null) {
   // Event: Update downloaded
   autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     log.info(`[AutoUpdater] Update downloaded: v${info.version}`)
+    // Reset menu back to "Check for Updates..." since update is ready
+    const setUpdateAvailable = (global as any).__setUpdateAvailable
+    if (setUpdateAvailable) {
+      setUpdateAvailable(false)
+    }
     sendToRenderer("update:downloaded", {
       version: info.version,
       releaseDate: info.releaseDate,

@@ -10,6 +10,7 @@ import {
 } from "../../../components/ui/icons"
 import { TextShimmer } from "../../../components/ui/text-shimmer"
 import { getToolStatus } from "./agent-tool-registry"
+import { AgentToolInterrupted } from "./agent-tool-interrupted"
 import { cn } from "../../../lib/utils"
 
 interface AgentWebSearchToolProps {
@@ -27,9 +28,10 @@ export const AgentWebSearchTool = memo(function AgentWebSearchTool({
   chatStatus,
 }: AgentWebSearchToolProps) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const { isPending, isError } = getToolStatus(part, chatStatus)
+  const { isPending, isError, isInterrupted } = getToolStatus(part, chatStatus)
 
   const query = part.input?.query || ""
+  const truncatedQuery = query.length > 40 ? query.slice(0, 37) + "..." : query
   
   // Parse results from output
   const results = useMemo(() => {
@@ -57,6 +59,11 @@ export const AgentWebSearchTool = memo(function AgentWebSearchTool({
   const resultCount = results.length
   const hasResults = resultCount > 0
 
+  // Show interrupted state if search was interrupted without completing
+  if (isInterrupted && !hasResults) {
+    return <AgentToolInterrupted toolName="Search" subtitle={truncatedQuery} />
+  }
+
   return (
     <div className="rounded-lg border border-border bg-muted/30 overflow-hidden mx-2">
       {/* Header - clickable to toggle expand */}
@@ -83,7 +90,7 @@ export const AgentWebSearchTool = memo(function AgentWebSearchTool({
           )}
           
           <span className="truncate text-foreground">
-            {query.length > 40 ? query.slice(0, 37) + "..." : query}
+            {truncatedQuery}
           </span>
         </div>
 

@@ -935,45 +935,23 @@ export async function getWorktreeDiff(
 
 		// Has uncommitted changes - diff against HEAD
 		if (!status.isClean()) {
-			const exclusionArgs = [
+			await git.add("-A");
+
+			const diff = await git.diff([
+				"--cached",
+				"HEAD",
+				"--no-color",
+				"--",
 				":!*.lock",
 				":!*-lock.*",
 				":!package-lock.json",
 				":!pnpm-lock.yaml",
 				":!yarn.lock",
-			];
-
-			const workingDiff = await git.diff([
-				"HEAD",
-				"--no-color",
-				"--",
-				...exclusionArgs,
 			]);
 
-			const untrackedFiles = status.not_added.filter((file) => {
-				if (file.endsWith(".lock")) return false;
-				if (file.includes("-lock.")) return false;
-				if (file.endsWith("package-lock.json")) return false;
-				if (file.endsWith("pnpm-lock.yaml")) return false;
-				if (file.endsWith("yarn.lock")) return false;
-				return true;
-			});
+			await git.reset(["HEAD"]).catch(() => {});
 
-			const untrackedDiff =
-				untrackedFiles.length > 0
-					? await git.diff([
-						"--no-color",
-						"--no-index",
-						"/dev/null",
-						...untrackedFiles,
-					])
-					: "";
-
-			const combinedDiff = [workingDiff, untrackedDiff]
-				.filter(Boolean)
-				.join("\n");
-
-			return { success: true, diff: combinedDiff };
+			return { success: true, diff: diff || "" };
 		}
 
 		// All committed - diff against base branch

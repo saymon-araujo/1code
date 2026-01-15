@@ -1995,10 +1995,10 @@ export function AgentsSidebar({
               <div className="flex-1" />
             </div>
 
-            {/* Share Feedback Button */}
+            {/* Premium Support Button */}
             <ButtonCustom
               onClick={() =>
-                window.open("https://discord.gg/8ektTZGnj4", "_blank")
+                window.open("https://discord.gg/utff7AdDaV", "_blank")
               }
               variant="outline"
               size="sm"
@@ -2007,7 +2007,7 @@ export function AgentsSidebar({
                 isMobileFullscreen ? "h-10" : "h-7",
               )}
             >
-              <span className="text-sm font-medium">Feedback</span>
+              <span className="text-sm font-medium">Premium support</span>
             </ButtonCustom>
           </motion.div>
         )}

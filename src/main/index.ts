@@ -1,7 +1,7 @@
 import { app, BrowserWindow, session, Menu } from "electron"
 import { join } from "path"
 import { createServer } from "http"
-import { readFileSync, existsSync } from "fs"
+import { readFileSync, existsSync, unlinkSync, readlinkSync } from "fs"
 import * as Sentry from "@sentry/electron/main"
 import { initDatabase, closeDatabase } from "./lib/db"
 import { createMainWindow, getWindow, showLoginPage } from "./windows/main"
@@ -245,7 +245,7 @@ if (process.env.ELECTRON_RENDERER_URL) {
 <head>
   <meta charset="UTF-8">
   <link rel="icon" type="image/svg+xml" href="${FAVICON_DATA_URI}">
-  <title>21st Agents - Authentication</title>
+  <title>1Code - Authentication</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
@@ -318,12 +318,64 @@ if (process.env.ELECTRON_RENDERER_URL) {
   })
 }
 
+// Clean up stale lock files from crashed instances
+// Returns true if locks were cleaned, false otherwise
+function cleanupStaleLocks(): boolean {
+  const userDataPath = app.getPath("userData")
+  const lockPath = join(userDataPath, "SingletonLock")
+
+  if (!existsSync(lockPath)) return false
+
+  try {
+    // SingletonLock is a symlink like "hostname-pid"
+    const lockTarget = readlinkSync(lockPath)
+    const match = lockTarget.match(/-(\d+)$/)
+    if (match) {
+      const pid = parseInt(match[1], 10)
+      try {
+        // Check if process is running (signal 0 doesn't kill, just checks)
+        process.kill(pid, 0)
+        // Process exists, lock is valid
+        console.log("[App] Lock held by running process:", pid)
+        return false
+      } catch {
+        // Process doesn't exist, clean up stale locks
+        console.log("[App] Cleaning stale locks (pid", pid, "not running)")
+        const filesToRemove = ["SingletonLock", "SingletonSocket", "SingletonCookie"]
+        for (const file of filesToRemove) {
+          const filePath = join(userDataPath, file)
+          if (existsSync(filePath)) {
+            try {
+              unlinkSync(filePath)
+            } catch (e) {
+              console.warn("[App] Failed to remove", file, e)
+            }
+          }
+        }
+        return true
+      }
+    }
+  } catch (e) {
+    console.warn("[App] Failed to check lock file:", e)
+  }
+  return false
+}
+
 // Prevent multiple instances
-const gotTheLock = app.requestSingleInstanceLock()
+let gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
-  app.quit()
-} else {
+  // Maybe stale lock - try cleanup and retry once
+  const cleaned = cleanupStaleLocks()
+  if (cleaned) {
+    gotTheLock = app.requestSingleInstanceLock()
+  }
+  if (!gotTheLock) {
+    app.quit()
+  }
+}
+
+if (gotTheLock) {
   // Handle second instance launch (also handles deep links on Windows/Linux)
   app.on("second-instance", (_event, commandLine) => {
     // Check for deep link in command line args
@@ -358,10 +410,10 @@ if (!gotTheLock) {
 
     // Set app user model ID for Windows (different in dev to avoid taskbar conflicts)
     if (process.platform === "win32") {
-      app.setAppUserModelId(IS_DEV ? "dev.21st.agents.dev" : "dev.21st.agents")
+      app.setAppUserModelId(IS_DEV ? "dev.21st.1code.dev" : "dev.21st.1code")
     }
 
-    console.log(`[App] Starting 21st Agents${IS_DEV ? " (DEV)" : ""}...`)
+    console.log(`[App] Starting 1Code${IS_DEV ? " (DEV)" : ""}...`)
 
     // Verify protocol registration after app is ready
     // This helps diagnose first-install issues where the protocol isn't recognized yet
@@ -385,91 +437,128 @@ if (!gotTheLock) {
 
     // Set About panel options with Claude Code version
     app.setAboutPanelOptions({
-      applicationName: "Agents",
+      applicationName: "1Code",
       applicationVersion: app.getVersion(),
       version: `Claude Code ${claudeCodeVersion}`,
       copyright: "Copyright © 2026 21st.dev",
     })
 
-    // Set custom menu - Cmd+N sends IPC to renderer for "New Agent"
-    const template: Electron.MenuItemConstructorOptions[] = [
-      {
-        label: app.name,
-        submenu: [
-          { role: "about", label: "About Agents" },
-          {
-            label: "Check for Updates...",
-            click: () => {
-              checkForUpdates(true)
+    // Track update availability for menu
+    let updateAvailable = false
+    let availableVersion: string | null = null
+
+    // Function to build and set application menu
+    const buildMenu = () => {
+      const template: Electron.MenuItemConstructorOptions[] = [
+        {
+          label: app.name,
+          submenu: [
+            { role: "about", label: "About 1Code" },
+            {
+              label: updateAvailable
+                ? `Update to v${availableVersion}...`
+                : "Check for Updates...",
+              click: () => {
+                // Send event to renderer to clear dismiss state
+                const win = getWindow()
+                if (win) {
+                  win.webContents.send("update:manual-check")
+                }
+                checkForUpdates(true)
+              },
             },
-          },
-          { type: "separator" },
-          { role: "services" },
-          { type: "separator" },
-          { role: "hide" },
-          { role: "hideOthers" },
-          { role: "unhide" },
-          { type: "separator" },
-          { role: "quit" },
-        ],
-      },
-      {
-        label: "File",
-        submenu: [
-          {
-            label: "New Agent",
-            accelerator: "CmdOrCtrl+N",
-            click: () => {
-              console.log("[Menu] New Agent clicked (Cmd+N)")
-              const win = getWindow()
-              if (win) {
-                console.log("[Menu] Sending shortcut:new-agent to renderer")
-                win.webContents.send("shortcut:new-agent")
-              } else {
-                console.log("[Menu] No window found!")
-              }
+            { type: "separator" },
+            { role: "services" },
+            { type: "separator" },
+            { role: "hide" },
+            { role: "hideOthers" },
+            { role: "unhide" },
+            { type: "separator" },
+            { role: "quit" },
+          ],
+        },
+        {
+          label: "File",
+          submenu: [
+            {
+              label: "New Agent",
+              accelerator: "CmdOrCtrl+N",
+              click: () => {
+                console.log("[Menu] New Agent clicked (Cmd+N)")
+                const win = getWindow()
+                if (win) {
+                  console.log("[Menu] Sending shortcut:new-agent to renderer")
+                  win.webContents.send("shortcut:new-agent")
+                } else {
+                  console.log("[Menu] No window found!")
+                }
+              },
             },
-          },
-        ],
-      },
-      {
-        label: "Edit",
-        submenu: [
-          { role: "undo" },
-          { role: "redo" },
-          { type: "separator" },
-          { role: "cut" },
-          { role: "copy" },
-          { role: "paste" },
-          { role: "selectAll" },
-        ],
-      },
-      {
-        label: "View",
-        submenu: [
-          { role: "reload" },
-          { role: "forceReload" },
-          { role: "toggleDevTools" },
-          { type: "separator" },
-          { role: "resetZoom" },
-          { role: "zoomIn" },
-          { role: "zoomOut" },
-          { type: "separator" },
-          { role: "togglefullscreen" },
-        ],
-      },
-      {
-        label: "Window",
-        submenu: [
-          { role: "minimize" },
-          { role: "zoom" },
-          { type: "separator" },
-          { role: "front" },
-        ],
-      },
-    ]
-    const menu = Menu.buildFromTemplate(template)
-    Menu.setApplicationMenu(menu)
+          ],
+        },
+        {
+          label: "Edit",
+          submenu: [
+            { role: "undo" },
+            { role: "redo" },
+            { type: "separator" },
+            { role: "cut" },
+            { role: "copy" },
+            { role: "paste" },
+            { role: "selectAll" },
+          ],
+        },
+        {
+          label: "View",
+          submenu: [
+            { role: "reload" },
+            { role: "forceReload" },
+            { role: "toggleDevTools" },
+            { type: "separator" },
+            { role: "resetZoom" },
+            { role: "zoomIn" },
+            { role: "zoomOut" },
+            { type: "separator" },
+            { role: "togglefullscreen" },
+          ],
+        },
+        {
+          label: "Window",
+          submenu: [
+            { role: "minimize" },
+            { role: "zoom" },
+            { type: "separator" },
+            { role: "front" },
+          ],
+        },
+        {
+          role: "help",
+          submenu: [
+            {
+              label: "Learn More",
+              click: async () => {
+                const { shell } = await import("electron")
+                await shell.openExternal("https://21st.dev")
+              },
+            },
+          ],
+        },
+      ]
+      Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+    }
+
+    // Set update state and rebuild menu
+    const setUpdateAvailable = (available: boolean, version?: string) => {
+      updateAvailable = available
+      availableVersion = version || null
+      buildMenu()
+    }
+
+    // Expose setUpdateAvailable globally for auto-updater
+    ;(global as any).__setUpdateAvailable = setUpdateAvailable
+
+    // Build initial menu
+    buildMenu()
 
     // Initialize auth manager
     authManager = new AuthManager(!!process.env.ELECTRON_RENDERER_URL)

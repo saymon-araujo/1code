@@ -650,38 +650,6 @@ function PlayButton({
   )
 }
 
-// Rollback button component for reverting to a previous message state
-function RollbackButton({
-  disabled = false,
-  onRollback,
-  isRollingBack = false,
-}: {
-  disabled?: boolean
-  onRollback: () => void
-  isRollingBack?: boolean
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={onRollback}
-          disabled={disabled || isRollingBack}
-          tabIndex={-1}
-          className={cn(
-            "p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]",
-            isRollingBack && "opacity-50 cursor-not-allowed",
-          )}
-        >
-          <IconTextUndo className="w-3.5 h-3.5 text-muted-foreground" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {isRollingBack ? "Rolling back..." : "Rollback to here"}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
 // Collapsible steps component for intermediate content before final response
 interface CollapsibleStepsProps {
   stepsCount: number
@@ -808,9 +776,6 @@ function ChatViewInner({
     setTtsPlaybackRate(rate)
     localStorage.setItem("tts-playback-rate", String(rate))
   }, [])
-
-  // Rollback state
-  const [isRollingBack, setIsRollingBack] = useState(false)
 
   // Check if user is at bottom of chat (like canvas)
   const isAtBottom = useCallback(() => {
@@ -1047,9 +1012,42 @@ function ChatViewInner({
   }
   chatRef.current = chat
 
+  // Save/restore drafts when switching between sub-chats
+  const prevSubChatIdForDraftRef = useRef<string | null>(null)
+  useEffect(() => {
+    console.log("[DRAFT] useEffect triggered, subChatId:", subChatId, "prev:", prevSubChatIdForDraftRef.current)
+    console.log("[DRAFT] editorRef.current:", editorRef.current)
+    console.log("[DRAFT] store chatId:", useAgentSubChatStore.getState().chatId)
+    console.log("[DRAFT] store drafts:", useAgentSubChatStore.getState().drafts)
+
+    // Save draft from previous sub-chat before switching
+    if (prevSubChatIdForDraftRef.current && prevSubChatIdForDraftRef.current !== subChatId) {
+      const prevDraft = editorRef.current?.getValue() || ""
+      console.log("[DRAFT] Saving draft for prev subChat:", prevSubChatIdForDraftRef.current, "text:", prevDraft)
+      if (prevDraft.trim()) {
+        useAgentSubChatStore.getState().saveDraft(prevSubChatIdForDraftRef.current, prevDraft)
+        console.log("[DRAFT] Draft saved, new drafts:", useAgentSubChatStore.getState().drafts)
+      }
+    }
+
+    // Restore draft for new sub-chat
+    const savedDraft = useAgentSubChatStore.getState().getDraft(subChatId)
+    console.log("[DRAFT] Restoring draft for subChat:", subChatId, "savedDraft:", savedDraft)
+    if (savedDraft) {
+      console.log("[DRAFT] Setting editor value to:", savedDraft)
+      editorRef.current?.setValue(savedDraft)
+    } else if (prevSubChatIdForDraftRef.current && prevSubChatIdForDraftRef.current !== subChatId) {
+      // Only clear if actually switching (not on initial mount)
+      console.log("[DRAFT] Clearing editor (no draft found)")
+      editorRef.current?.clear()
+    }
+
+    prevSubChatIdForDraftRef.current = subChatId
+  }, [subChatId])
+
   // Use subChatId as stable key to prevent HMR-induced duplicate resume requests
   // resume: !!streamId to reconnect to active streams (background streaming support)
-  const { messages, sendMessage, status, stop, regenerate, setMessages } = useChat({
+  const { messages, sendMessage, status, stop, regenerate } = useChat({
     id: subChatId,
     chat,
     resume: !!streamId,
@@ -1067,54 +1065,6 @@ function ChatViewInner({
   }, [status, subChatId, messages.length])
 
   const isStreaming = status === "streaming" || status === "submitted"
-
-  // Rollback handler - truncates messages to the clicked assistant message and restores git state
-  // The SDK UUID from the last assistant message will be used for resumeSessionAt on next send
-  const handleRollback = useCallback(
-    async (assistantMsg: (typeof messages)[0]) => {
-      if (isRollingBack) {
-        toast.error("Rollback already in progress")
-        return
-      }
-      if (isStreaming) {
-        toast.error("Cannot rollback while streaming")
-        return
-      }
-
-      const sdkUuid = (assistantMsg.metadata as any)?.sdkMessageUuid
-      if (!sdkUuid) {
-        toast.error("Cannot rollback: message has no SDK UUID")
-        return
-      }
-
-      setIsRollingBack(true)
-
-      try {
-        // Single call handles both message truncation and git rollback
-        const result = await trpcClient.chats.rollbackToMessage.mutate({
-          subChatId,
-          sdkMessageUuid: sdkUuid,
-        })
-
-        if (!result.success) {
-          toast.error(`Failed to rollback: ${result.error}`)
-          setIsRollingBack(false)
-          return
-        }
-
-        // Update local state with truncated messages from server
-        setMessages(result.messages)
-
-        toast.success("Rolled back. Send a message to continue from here.")
-      } catch (error) {
-        console.error("[handleRollback] Error:", error)
-        toast.error("Failed to rollback")
-      } finally {
-        setIsRollingBack(false)
-      }
-    },
-    [isRollingBack, isStreaming, setMessages, subChatId],
-  )
 
   // Sync loading status to atom for UI indicators
   // When streaming starts, set loading. When it stops, clear loading.
@@ -1556,8 +1506,9 @@ function ChatViewInner({
     if (!hasText && !hasImages) return
 
     const text = inputValue.trim()
-    // Clear editor
+    // Clear editor and draft
     editorRef.current?.clear()
+    useAgentSubChatStore.getState().clearDraft(subChatId)
 
     // Track message sent
     trackMessageSent({
@@ -2029,12 +1980,6 @@ function ChatViewInner({
                     // Detect final text by structure: last text part after any tool parts
                     // This works locally without needing metadata.finalTextId
                     const allParts = assistantMsg.parts || []
-                    const exitPlanPart = allParts.find(
-                      (p: any) => p.type === "tool-ExitPlanMode",
-                    )
-                    const hasPlan =
-                      typeof exitPlanPart?.output?.plan === "string" &&
-                      exitPlanPart.output.plan.trim().length > 0
 
                     // Find the last tool index and last text index
                     let lastToolIndex = -1
@@ -2062,17 +2007,12 @@ function ChatViewInner({
                     // For non-last messages, show final text even while streaming (they're already complete)
                     const hasFinalText =
                       finalTextIndex !== -1 && (!isStreaming || !isLastMessage)
-                    const shouldCollapseSteps = hasFinalText || hasPlan
-                    const stepParts = shouldCollapseSteps
-                      ? hasFinalText
-                        ? (assistantMsg.parts || []).slice(0, finalTextIndex)
-                        : assistantMsg.parts || []
+                    const stepParts = hasFinalText
+                      ? (assistantMsg.parts || []).slice(0, finalTextIndex)
                       : []
                     const finalParts = hasFinalText
                       ? (assistantMsg.parts || []).slice(finalTextIndex)
-                      : hasPlan
-                        ? []
-                        : assistantMsg.parts || []
+                      : assistantMsg.parts || []
 
                     // Count visible step items (for the toggle label)
                     const visibleStepsCount = stepParts.filter((p: any) => {
@@ -2367,7 +2307,7 @@ function ChatViewInner({
                       >
                         <div className="flex flex-col gap-1.5">
                           {/* Collapsible steps section - only show when we have a final text */}
-                          {shouldCollapseSteps && visibleStepsCount > 0 && (
+                          {hasFinalText && visibleStepsCount > 0 && (
                             <CollapsibleSteps stepsCount={visibleStepsCount}>
                               {(() => {
                                 const grouped = groupExploringTools(
@@ -2425,12 +2365,20 @@ function ChatViewInner({
                           })()}
 
                           {/* Plan card at end of message - if ExitPlanMode tool has plan content */}
-                          {exitPlanPart ? (
-                            <AgentExitPlanModeTool
-                              part={exitPlanPart}
-                              chatStatus={status}
-                            />
-                          ) : null}
+                          {(() => {
+                            const exitPlanPart = allParts.find(
+                              (p: any) => p.type === "tool-ExitPlanMode",
+                            )
+                            if (exitPlanPart) {
+                              return (
+                                <AgentExitPlanModeTool
+                                  part={exitPlanPart}
+                                  chatStatus={status}
+                                />
+                              )
+                            }
+                            return null
+                          })()}
 
                           {/* Planning indicator - like Canvas */}
                           {shouldShowPlanning && (
@@ -2464,14 +2412,6 @@ function ChatViewInner({
                                 playbackRate={ttsPlaybackRate}
                                 onPlaybackRateChange={handlePlaybackRateChange}
                               />
-                              {/* Rollback button - only show if not last message and has SDK UUID */}
-                              {(assistantMsg.metadata as any)?.sdkMessageUuid && (
-                                  <RollbackButton
-                                    disabled={isStreaming}
-                                    onRollback={() => handleRollback(assistantMsg)}
-                                    isRollingBack={isRollingBack}
-                                  />
-                                )}
                             </div>
                             {/* Token usage info - right side */}
                             <AgentMessageUsage

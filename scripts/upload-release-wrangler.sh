@@ -156,7 +156,7 @@ else
   
   # Create release with assets (not draft, mark as latest)
   gh release create "$TAG" \
-    --title "Agents $TAG" \
+    --title "1Code $TAG" \
     --latest \
     --notes "## What's New
 
