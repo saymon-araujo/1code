@@ -1,8 +1,10 @@
 # 1Code
 
+[1Code.dev](https://1code.dev)
+
 Best UI for Claude Code with local and remote agent execution.
 
-By [21st.dev](https://21st.dev)
+By [21st.dev](https://21st.dev) team
 
 ## Features
 
