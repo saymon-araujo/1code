@@ -70,6 +70,7 @@ import { soundNotificationsEnabledAtom } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
 import { api } from "../../../lib/mock-api"
 import { trpc, trpcClient } from "../../../lib/trpc"
+import { getQueryClient } from "../../../contexts/TRPCProvider"
 import { cn } from "../../../lib/utils"
 import { getShortcutKey, isDesktopApp } from "../../../lib/utils/platform"
 import { terminalSidebarOpenAtom } from "../../terminal/atoms"
@@ -158,6 +159,7 @@ import { PrStatusBar } from "../ui/pr-status-bar"
 import { SubChatSelector } from "../ui/sub-chat-selector"
 import { SubChatStatusCard } from "../ui/sub-chat-status-card"
 import { autoRenameAgentChat } from "../utils/auto-rename"
+import { handlePasteEvent } from "../utils/paste-text"
 import { generateCommitToPrMessage, generatePrMessage, generateReviewMessage } from "../utils/pr-message"
 import {
   saveSubChatDraft,
@@ -858,7 +860,7 @@ function ChatViewInner({
         // Revert on error (toast shown by mutation onError)
         useAgentSubChatStore
           .getState()
-          .updateSubChatName(subChatId, subChatName || "New Agent")
+          .updateSubChatName(subChatId, subChatName || "New Chat")
       }
     },
     [subChatId, subChatName, renameSubChatMutation],
@@ -1726,6 +1728,32 @@ function ChatViewInner({
       })
     }
 
+    // Desktop app: Optimistic update for chats.list to update sidebar immediately
+    const queryClient = getQueryClient()
+    if (queryClient) {
+      const now = new Date()
+      const queries = queryClient.getQueryCache().getAll()
+      const chatsListQuery = queries.find(q =>
+        Array.isArray(q.queryKey) &&
+        Array.isArray(q.queryKey[0]) &&
+        q.queryKey[0][0] === 'chats' &&
+        q.queryKey[0][1] === 'list'
+      )
+      if (chatsListQuery) {
+        queryClient.setQueryData(chatsListQuery.queryKey, (old: any[] | undefined) => {
+          if (!old) return old
+          // Update the timestamp and sort by updatedAt descending
+          const updated = old.map((c: any) =>
+            c.id === parentChatId ? { ...c, updatedAt: now } : c,
+          )
+          return updated.sort(
+            (a: any, b: any) =>
+              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+          )
+        })
+      }
+    }
+
     // Optimistically update sub-chat timestamp to move it to top
     useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
 
@@ -1834,25 +1862,9 @@ function ChatViewInner({
   )
 
   // Paste handler for images and plain text
+  // Uses async text insertion to prevent UI freeze with large text
   const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      const files = Array.from(e.clipboardData.items)
-        .filter((item) => item.type.startsWith("image/"))
-        .map((item) => item.getAsFile())
-        .filter(Boolean) as File[]
-
-      if (files.length > 0) {
-        e.preventDefault()
-        handleAddAttachments(files)
-      } else {
-        // Paste as plain text only (prevents HTML from being pasted)
-        const text = e.clipboardData.getData("text/plain")
-        if (text) {
-          e.preventDefault()
-          document.execCommand("insertText", false, text)
-        }
-      }
-    },
+    (e: React.ClipboardEvent) => handlePasteEvent(e, handleAddAttachments),
     [handleAddAttachments],
   )
 
@@ -1973,7 +1985,7 @@ function ChatViewInner({
         >
           <ChatTitleEditor
             name={subChatName}
-            placeholder="New Agent"
+            placeholder="New Chat"
             onSave={handleRenameSubChat}
             isMobile={false}
             chatId={subChatId}
@@ -3722,7 +3734,7 @@ export function ChatView({
           : sc.updated_at?.toISOString()
       return {
         id: sc.id,
-        name: sc.name || "New Agent",
+        name: sc.name || "New Chat",
         // Prefer DB timestamp, fall back to local timestamp, then current time
         created_at:
           createdAt ?? existingLocal?.created_at ?? new Date().toISOString(),
@@ -3745,7 +3757,7 @@ export function ChatView({
       if (!dbSubChatIds.has(id)) {
         allSubChats.push({
           id,
-          name: "New Agent",
+          name: "New Chat",
           created_at: new Date().toISOString(),
         })
       }
@@ -3867,6 +3879,9 @@ export function ChatView({
 
           // Refresh diff stats after agent finishes making changes
           fetchDiffStatsRef.current()
+
+          // Note: sidebar timestamp update is handled via optimistic update in handleSend
+          // No need to refetch here as it would overwrite the optimistic update with stale data
         },
       })
 
@@ -3898,7 +3913,7 @@ export function ChatView({
     // Create sub-chat in DB first to get the real ID
     const newSubChat = await trpcClient.chats.createSubChat.mutate({
       chatId,
-      name: "New Agent",
+      name: "New Chat",
       mode: subChatMode,
     })
     const newId = newSubChat.id
@@ -3909,7 +3924,7 @@ export function ChatView({
     // Add to allSubChats with placeholder name
     store.addToAllSubChats({
       id: newId,
-      name: "New Agent",
+      name: "New Chat",
       created_at: new Date().toISOString(),
       mode: subChatMode,
     })
@@ -3986,6 +4001,9 @@ export function ChatView({
 
           // Refresh diff stats after agent finishes making changes
           fetchDiffStatsRef.current()
+
+          // Note: sidebar timestamp update is handled via optimistic update in handleSend
+          // No need to refetch here as it would overwrite the optimistic update with stale data
         },
       })
       agentChatStore.set(newId, newChat, chatId)
